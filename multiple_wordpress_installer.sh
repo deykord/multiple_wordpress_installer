@@ -60,97 +60,155 @@ check_root() {
     fi
 }
 
-# Get domain names and configuration from user
-get_configuration() {
+# Show usage information
+show_usage() {
+    echo "Usage: $0 [OPTIONS] DOMAINS..."
+    echo ""
+    echo "Install WordPress on multiple domains with full automation"
+    echo ""
+    echo "Options:"
+    echo "  -u, --admin-user USERNAME    WordPress admin username (required)"
+    echo "  -p, --admin-pass PASSWORD    WordPress admin password (required)"
+    echo "  -e, --admin-email EMAIL      WordPress admin email (required)"
+    echo "  -t, --title-prefix PREFIX    Site title prefix (default: 'WordPress Site')"
+    echo "  --no-ssl                     Skip SSL certificate setup"
+    echo "  -h, --help                   Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0 -u admin -p MyPass123 -e admin@example.com example.com blog.com"
+    echo "  $0 --admin-user=admin --admin-pass=MyPass123 --admin-email=me@domain.com example.com"
+    echo ""
+    echo "Note: Run as root on fresh Ubuntu server"
+}
+
+# Parse command line arguments
+parse_arguments() {
+    SKIP_SSL=false
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -u|--admin-user)
+                WP_ADMIN_USER="$2"
+                shift 2
+                ;;
+            --admin-user=*)
+                WP_ADMIN_USER="${1#*=}"
+                shift
+                ;;
+            -p|--admin-pass)
+                WP_ADMIN_PASS="$2"
+                shift 2
+                ;;
+            --admin-pass=*)
+                WP_ADMIN_PASS="${1#*=}"
+                shift
+                ;;
+            -e|--admin-email)
+                WP_ADMIN_EMAIL="$2"
+                shift 2
+                ;;
+            --admin-email=*)
+                WP_ADMIN_EMAIL="${1#*=}"
+                shift
+                ;;
+            -t|--title-prefix)
+                SITE_TITLE_PREFIX="$2"
+                shift 2
+                ;;
+            --title-prefix=*)
+                SITE_TITLE_PREFIX="${1#*=}"
+                shift
+                ;;
+            --no-ssl)
+                SKIP_SSL=true
+                shift
+                ;;
+            -h|--help)
+                show_usage
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                show_usage
+                exit 1
+                ;;
+            *)
+                # Assume it's a domain
+                if [[ "$1" =~ ^[a-zA-Z0-9][a-zA-Z0-9\.-]*\.[a-zA-Z]{2,}$ ]]; then
+                    DOMAINS+=("$1")
+                else
+                    print_warning "Invalid domain format: $1 (adding anyway)"
+                    DOMAINS+=("$1")
+                fi
+                shift
+                ;;
+        esac
+    done
+}
+
+# Validate configuration
+validate_configuration() {
+    local errors=0
+    
+    # Check required parameters
+    if [[ -z "$WP_ADMIN_USER" ]]; then
+        print_error "WordPress admin username is required (-u or --admin-user)"
+        errors=$((errors + 1))
+    elif [[ ${#WP_ADMIN_USER} -lt 3 ]]; then
+        print_error "Username must be at least 3 characters"
+        errors=$((errors + 1))
+    fi
+    
+    if [[ -z "$WP_ADMIN_PASS" ]]; then
+        print_error "WordPress admin password is required (-p or --admin-pass)"
+        errors=$((errors + 1))
+    elif [[ ${#WP_ADMIN_PASS} -lt 6 ]]; then
+        print_error "Password must be at least 6 characters"
+        errors=$((errors + 1))
+    fi
+    
+    if [[ -z "$WP_ADMIN_EMAIL" ]]; then
+        print_error "WordPress admin email is required (-e or --admin-email)"
+        errors=$((errors + 1))
+    elif [[ ! "$WP_ADMIN_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+        print_error "Invalid email format"
+        errors=$((errors + 1))
+    fi
+    
+    if [[ ${#DOMAINS[@]} -eq 0 ]]; then
+        print_error "At least one domain is required"
+        errors=$((errors + 1))
+    fi
+    
+    # Set default title prefix if not provided
+    if [[ -z "$SITE_TITLE_PREFIX" ]]; then
+        SITE_TITLE_PREFIX="WordPress Site"
+    fi
+    
+    if [[ $errors -gt 0 ]]; then
+        echo ""
+        show_usage
+        exit 1
+    fi
+}
+
+# Display configuration summary
+show_configuration() {
     print_header "WordPress Multi-Site Installer Configuration"
     
     echo -e "${CYAN}This script will install and configure multiple WordPress sites automatically${NC}"
     echo -e "${CYAN}Including: NGINX, PHP, MySQL, SSL certificates, and security configurations${NC}"
     echo ""
     
-    # Get domains
-    echo "Enter your domain names (one per line):"
-    echo "Press Enter on empty line when finished"
-    echo ""
-    
-    while true; do
-        echo -n "Domain $(( ${#DOMAINS[@]} + 1 )): "
-        read -r domain
-        if [[ -z "$domain" ]]; then
-            break
-        fi
-        # Validate domain format (basic)
-        if [[ "$domain" =~ ^[a-zA-Z0-9][a-zA-Z0-9\.-]*\.[a-zA-Z]{2,}$ ]]; then
-            DOMAINS+=("$domain")
-        else
-            print_warning "Invalid domain format: $domain"
-            echo -n "Add anyway? (y/N): "
-            read -r confirm
-            if [[ "$confirm" =~ ^[Yy]$ ]]; then
-                DOMAINS+=("$domain")
-            fi
-        fi
-    done
-    
-    if [[ ${#DOMAINS[@]} -eq 0 ]]; then
-        print_error "No domains provided. Exiting."
-        exit 1
-    fi
-    
-    echo ""
-    echo "WordPress Admin Configuration:"
-    echo "This will be used for all WordPress installations"
-    echo ""
-    
-    # Get WordPress admin details
-    while [[ -z "$WP_ADMIN_USER" ]]; do
-        echo -n "WordPress Admin Username: "
-        read -r WP_ADMIN_USER
-        if [[ ${#WP_ADMIN_USER} -lt 3 ]]; then
-            print_warning "Username must be at least 3 characters"
-            WP_ADMIN_USER=""
-        fi
-    done
-    
-    while [[ -z "$WP_ADMIN_PASS" ]]; do
-        echo -n "WordPress Admin Password: "
-        read -s WP_ADMIN_PASS
-        echo ""
-        if [[ ${#WP_ADMIN_PASS} -lt 6 ]]; then
-            print_warning "Password must be at least 6 characters"
-            WP_ADMIN_PASS=""
-        fi
-    done
-    
-    while [[ -z "$WP_ADMIN_EMAIL" ]]; do
-        echo -n "WordPress Admin Email: "
-        read -r WP_ADMIN_EMAIL
-        if [[ ! "$WP_ADMIN_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
-            print_warning "Invalid email format"
-            WP_ADMIN_EMAIL=""
-        fi
-    done
-    
-    echo -n "Site Title Prefix (will add domain name): "
-    read -r SITE_TITLE_PREFIX
-    if [[ -z "$SITE_TITLE_PREFIX" ]]; then
-        SITE_TITLE_PREFIX="WordPress Site"
-    fi
-    
-    echo ""
     print_status "Configuration Summary:"
     print_status "Domains to install: ${DOMAINS[*]}"
     print_status "Admin User: $WP_ADMIN_USER"
     print_status "Admin Email: $WP_ADMIN_EMAIL"
     print_status "Site Title Prefix: $SITE_TITLE_PREFIX"
-    echo ""
-    
-    echo -n "Continue with installation? (Y/n): "
-    read -r confirm
-    if [[ "$confirm" =~ ^[Nn]$ ]]; then
-        print_error "Installation cancelled by user"
-        exit 1
+    if [[ "$SKIP_SSL" == true ]]; then
+        print_warning "SSL setup will be skipped"
     fi
+    echo ""
 }
 
 # Update system packages
@@ -722,8 +780,14 @@ main() {
     # Pre-installation checks
     check_root
     
-    # Get configuration from user
-    get_configuration
+    # Parse command line arguments
+    parse_arguments "$@"
+    
+    # Validate configuration
+    validate_configuration
+    
+    # Show configuration summary
+    show_configuration
     
     # Start installation process
     print_header "Starting Installation Process"
@@ -756,13 +820,10 @@ main() {
     fi
     
     # Optional SSL setup
-    echo ""
-    echo -n "Do you want to setup SSL certificates now? (Y/n): "
-    read -r ssl_confirm
-    if [[ ! "$ssl_confirm" =~ ^[Nn]$ ]]; then
+    if [[ "$SKIP_SSL" != true ]]; then
         setup_ssl
     else
-        print_warning "SSL setup skipped. You can run 'certbot --nginx' later."
+        print_warning "SSL setup skipped as requested"
     fi
     
     # Security and management setup
