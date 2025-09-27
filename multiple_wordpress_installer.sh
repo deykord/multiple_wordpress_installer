@@ -167,12 +167,16 @@ update_system() {
 install_packages() {
     print_header "Installing Required Packages"
     
+    # Add Ondrej PHP repository for latest PHP versions
+    print_step "Adding PHP repository..."
+    apt install -y software-properties-common
+    add-apt-repository ppa:ondrej/php -y
+    apt update
+    
     # Detect PHP version available
-    if apt list --installed | grep -q "php8.3"; then
+    if apt-cache policy php8.3 | grep -q "Candidate:"; then
         PHP_VERSION="8.3"
-    elif apt list --available | grep -q "php8.3"; then
-        PHP_VERSION="8.3"
-    elif apt list --available | grep -q "php8.1"; then
+    elif apt-cache policy php8.1 | grep -q "Candidate:"; then
         PHP_VERSION="8.1"
     else
         PHP_VERSION="8.1"  # Fallback
@@ -194,7 +198,6 @@ install_packages() {
         php${PHP_VERSION}-zip \
         php${PHP_VERSION}-intl \
         php${PHP_VERSION}-cli \
-        php${PHP_VERSION}-json \
         php${PHP_VERSION}-common \
         unzip \
         curl \
