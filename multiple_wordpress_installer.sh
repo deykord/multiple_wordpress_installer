@@ -141,12 +141,16 @@ parse_arguments() {
                 exit 1
                 ;;
             *)
-                # Assume it's a domain
-                if [[ "$1" =~ ^[a-zA-Z0-9][a-zA-Z0-9\.-]*\.[a-zA-Z]{2,}$ ]]; then
-                    DOMAINS+=("$1")
+                # Assume it's a domain - validate it's not empty or just whitespace
+                if [[ -n "$1" && ! "$1" =~ ^[[:space:]]*$ ]]; then
+                    if [[ "$1" =~ ^[a-zA-Z0-9][a-zA-Z0-9\.-]*\.[a-zA-Z]{2,}$ ]]; then
+                        DOMAINS+=("$1")
+                    else
+                        print_warning "Invalid domain format: $1 (adding anyway)"
+                        DOMAINS+=("$1")
+                    fi
                 else
-                    print_warning "Invalid domain format: $1 (adding anyway)"
-                    DOMAINS+=("$1")
+                    print_warning "Skipping empty domain argument"
                 fi
                 shift
                 ;;
@@ -228,7 +232,8 @@ update_system() {
     export DEBIAN_FRONTEND=noninteractive
     export APT_LISTCHANGES_FRONTEND=none
     
-    apt update -qq 2>/dev/null && apt upgrade -y -qq 2>/dev/null
+    # Use apt-get instead of apt for better script compatibility
+    apt-get update -qq 2>/dev/null && apt-get upgrade -y -qq 2>/dev/null
     
     print_status "System updated successfully"
 }
@@ -255,7 +260,7 @@ install_packages() {
     print_step "Installing LEMP stack with PHP $PHP_VERSION..."
     
     # Install packages with suppressed output for automation
-    DEBIAN_FRONTEND=noninteractive apt install -y -qq \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
         nginx \
         mariadb-server \
         php${PHP_VERSION} \
@@ -344,11 +349,28 @@ EOF
 # Create database and user for a domain
 create_database() {
     local domain=$1
-    local db_name=$(echo "wp_$domain" | sed 's/[.-]/_/g')
-    local db_user=$(echo "${domain}_user" | sed 's/[.-]/_/g')
+    
+    # Validate domain is not empty
+    if [[ -z "$domain" || "$domain" =~ ^[[:space:]]*$ ]]; then
+        print_error "Invalid domain provided to create_database: '$domain'"
+        return 1
+    fi
+    
+    # Clean domain name for database use (remove special chars, limit length)
+    local clean_domain=$(echo "$domain" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c1-50)
+    local db_name="wp_${clean_domain}"
+    local db_user="${clean_domain}_user"
+    
+    # Ensure names are not empty after cleaning
+    if [[ -z "$clean_domain" ]]; then
+        print_error "Domain '$domain' resulted in empty database name after cleaning"
+        return 1
+    fi
+    
     local db_password=$(openssl rand -base64 20)
     
     print_step "Creating database for $domain..."
+    print_step "Database name: $db_name"
     
     # Determine MySQL authentication method
     if [[ -n "$MYSQL_ROOT_PASSWORD" ]]; then
@@ -365,11 +387,16 @@ GRANT ALL PRIVILEGES ON \`${db_name}\`.* TO '${db_user}'@'localhost';
 FLUSH PRIVILEGES;
 EOF
     
-    # Save database credentials
-    echo "${domain}:${db_name}:${db_user}:${db_password}" >> /root/wp_database_credentials.txt
-    
-    print_status "Database created: $db_name"
-    print_status "User created: $db_user"
+    if [[ $? -eq 0 ]]; then
+        # Save database credentials
+        echo "${domain}:${db_name}:${db_user}:${db_password}" >> /root/wp_database_credentials.txt
+        
+        print_status "Database created: $db_name"
+        print_status "User created: $db_user"
+    else
+        print_error "Failed to create database for $domain"
+        return 1
+    fi
 }
 
 # Setup WordPress with full automation
@@ -560,7 +587,7 @@ setup_ssl() {
     
     # Install Certbot
     print_step "Installing Certbot..."
-    DEBIAN_FRONTEND=noninteractive apt install -y -qq certbot python3-certbot-nginx 2>/dev/null
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq certbot python3-certbot-nginx 2>/dev/null
     
     # Get SSL certificates for each domain
     for domain in "${DOMAINS[@]}"; do
@@ -819,10 +846,22 @@ main() {
     
     # Install WordPress for each domain
     for domain in "${DOMAINS[@]}"; do
+        # Skip empty or whitespace-only domains
+        if [[ -z "$domain" || "$domain" =~ ^[[:space:]]*$ ]]; then
+            print_warning "Skipping empty domain"
+            continue
+        fi
+        
         print_header "Installing WordPress for: $domain"
-        create_database "$domain"
-        setup_wordpress "$domain"
-        create_nginx_config "$domain"
+        
+        # Create database with error handling
+        if create_database "$domain"; then
+            setup_wordpress "$domain"
+            create_nginx_config "$domain"
+        else
+            print_error "Skipping WordPress setup for $domain due to database creation failure"
+            continue
+        fi
     done
     
     # Test and reload Nginx

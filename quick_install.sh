@@ -56,8 +56,8 @@ print_info "Downloading installer from GitHub..."
 # Check if git is installed, install if needed
 if ! command -v git &> /dev/null; then
     print_info "Installing git..."
-    apt update -qq >/dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt install -y -qq git >/dev/null 2>&1
+    apt-get update -qq >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git >/dev/null 2>&1
 fi
 
 # Create temporary directory
