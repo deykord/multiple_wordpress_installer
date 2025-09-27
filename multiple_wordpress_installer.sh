@@ -8,6 +8,14 @@
 
 set -e  # Exit on any error
 
+# Set TERM environment variable if not set (fixes automated deployment issues)
+if [[ -z "$TERM" ]]; then
+    export TERM=xterm-256color
+fi
+
+# Set non-interactive mode for apt
+export DEBIAN_FRONTEND=noninteractive
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -216,7 +224,11 @@ update_system() {
     print_header "Updating System Packages"
     print_step "Updating package list and upgrading system..."
     
-    apt update -qq && apt upgrade -y -qq
+    # Ensure non-interactive mode and suppress warnings
+    export DEBIAN_FRONTEND=noninteractive
+    export APT_LISTCHANGES_FRONTEND=none
+    
+    apt update -qq 2>/dev/null && apt upgrade -y -qq 2>/dev/null
     
     print_status "System updated successfully"
 }
@@ -242,8 +254,8 @@ install_packages() {
     
     print_step "Installing LEMP stack with PHP $PHP_VERSION..."
     
-    # Install packages
-    apt install -y \
+    # Install packages with suppressed output for automation
+    DEBIAN_FRONTEND=noninteractive apt install -y -qq \
         nginx \
         mariadb-server \
         php${PHP_VERSION} \
@@ -261,12 +273,12 @@ install_packages() {
         curl \
         wget \
         openssl \
-        ufw
+        ufw 2>/dev/null
     
     # Install WP-CLI
     print_step "Installing WP-CLI..."
     if [[ ! -f /usr/local/bin/wp ]]; then
-        wget -q -O wp-cli.phar https://github.com/wp-cli/wp-cli/releases/download/v2.10.0/wp-cli-2.10.0.phar
+        wget -q -O wp-cli.phar https://github.com/wp-cli/wp-cli/releases/download/v2.10.0/wp-cli-2.10.0.phar 2>/dev/null
         chmod +x wp-cli.phar
         mv wp-cli.phar /usr/local/bin/wp
     fi
@@ -279,9 +291,9 @@ install_packages() {
         exit 1
     fi
     
-    # Enable and start services
-    systemctl enable nginx mariadb php${PHP_VERSION}-fpm
-    systemctl start nginx mariadb php${PHP_VERSION}-fpm
+    # Enable and start services (suppress systemctl output)
+    systemctl enable nginx mariadb php${PHP_VERSION}-fpm >/dev/null 2>&1
+    systemctl start nginx mariadb php${PHP_VERSION}-fpm >/dev/null 2>&1
     
     print_status "All packages installed and services started"
     print_status "Using PHP version: $PHP_VERSION"
@@ -548,7 +560,7 @@ setup_ssl() {
     
     # Install Certbot
     print_step "Installing Certbot..."
-    apt install -y certbot python3-certbot-nginx -qq
+    DEBIAN_FRONTEND=noninteractive apt install -y -qq certbot python3-certbot-nginx 2>/dev/null
     
     # Get SSL certificates for each domain
     for domain in "${DOMAINS[@]}"; do
@@ -770,8 +782,12 @@ create_summary() {
 
 # Main installation function
 main() {
+    # Set terminal for automation compatibility
+    if [[ -z "$TERM" ]]; then
+        export TERM=xterm-256color
+    fi
+    
     # Show script header
-    clear
     print_header "Multiple WordPress Installer v2.0"
     echo -e "${CYAN}Automated WordPress installation for multiple domains${NC}"
     echo -e "${CYAN}Includes NGINX, PHP, MySQL, SSL, and security configuration${NC}"

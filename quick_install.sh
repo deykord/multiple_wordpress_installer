@@ -2,6 +2,14 @@
 # Quick WordPress Multi-Site Installer
 # One-liner deployment script
 
+# Set TERM environment variable if not set (fixes automated deployment issues)
+if [[ -z "$TERM" ]]; then
+    export TERM=xterm-256color
+fi
+
+# Set non-interactive mode for apt
+export DEBIAN_FRONTEND=noninteractive
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -28,6 +36,13 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# Suppress terminal warnings and set environment for automation
+export DEBIAN_FRONTEND=noninteractive
+export APT_LISTCHANGES_FRONTEND=none
+if [[ -z "$TERM" ]]; then
+    export TERM=xterm-256color
+fi
+
 # Show header
 echo ""
 echo -e "${BLUE}===============================================${NC}"
@@ -37,6 +52,13 @@ echo ""
 
 # Download and execute the installer
 print_info "Downloading installer from GitHub..."
+
+# Check if git is installed, install if needed
+if ! command -v git &> /dev/null; then
+    print_info "Installing git..."
+    apt update -qq >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt install -y -qq git >/dev/null 2>&1
+fi
 
 # Create temporary directory
 TEMP_DIR="/tmp/wp_installer_$$"
